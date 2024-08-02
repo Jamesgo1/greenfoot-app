@@ -157,7 +157,8 @@ class DataCleanser:
 
     def trim_whitespace_all_string_cols(self):
         for col in self.df.select(cs.by_dtype(pl.String)).columns:
-            self.df = self.df.with_columns(pl.col(col).str.strip().str.replace_all(r"\s\s+", ""))
+            print(col)
+            self.df = self.df.with_columns(pl.col(col).str.strip_chars().str.replace_all(r"\s\s+", ""))
         logger.info(self.df.glimpse(return_as_string=True))
 
     def title_case_string_cols(self):
@@ -312,13 +313,18 @@ class RelationalDataFrameBuilder:
                        "tree_surround",
                        "tree_vigour",
                        "tree_condition",
-                       "tree_data_quality"]
+                       "tree_data_quality",
+                       "tree_change"
+                       ]
 
     def __init__(self, cleansed_df):
         self.df = cleansed_df
 
         self.type_tables_dict = {}
         self.final_tables_dict = {}
+
+    def add_tree_change_id(self):
+        self.df = self.df.with_columns(pl.lit("original").alias("tree_change"))
 
     def create_tree_species_dfs(self):
         # Get the species type table
@@ -382,23 +388,34 @@ class RelationalDataFrameBuilder:
         df_with_index.glimpse()
         return df_with_index
 
-    def create_main_tree_table_df(self):
+    def create_main_tree_history_table_df(self):
         # Add index to main df
         df_with_index = self.df.with_row_index(offset=1)
-        df_with_index = df_with_index.rename({"index": "tree_id"})
+        df_with_index = df_with_index.rename({"index": "tree_history_id"})
 
         # Drop col not in main table
         df_with_index = df_with_index.drop("tree_species_type")
 
         # Replace type desc with type_ids
         df_with_index = self.convert_type_cols_to_ids(df_with_index)
-        self.final_tables_dict["tree"] = df_with_index
+        df_with_index = df_with_index.with_columns(pl.lit(1).alias("is_live_change_ind"))
+        df_with_index = df_with_index.with_columns(pl.lit('DEFAULT').alias("tree_change_datetime"))
+        self.final_tables_dict["tree_history"] = df_with_index
+
+    def create_tree_table(self):
+        history_df = self.final_tables_dict["tree_history"]
+        tree_df = history_df.select("tree_history_id")
+        tree_df = tree_df.rename({"tree_history_id": "tree_id"})
+        tree_df = tree_df.with_columns(pl.lit('NULL').alias("inactive_datetime"))
+        tree_df = tree_df.with_columns(pl.col("tree_id").alias("tree_history_id"))
+        self.final_tables_dict["tree"] = tree_df
 
     def create_all_tables(self):
+        self.add_tree_change_id()
         self.create_type_tables_dict()
         self.create_tree_species_dfs()
-        self.create_main_tree_table_df()
-
+        self.create_main_tree_history_table_df()
+        self.create_tree_table()
         self.final_tables_dict = {**self.final_tables_dict, **self.type_tables_dict}
 
         logger.info("Final tables:")
@@ -409,7 +426,7 @@ class RelationalDataFrameBuilder:
 
 
 class RelationalDBScriptGenerator:
-    db_name = "greenfoot"
+    db_name = "greenfootv2"
 
     type_table_list = RelationalDataFrameBuilder.type_table_list
 
@@ -449,11 +466,9 @@ class RelationalDBScriptGenerator:
         joined_values = "\n".join(values_sql)
 
         insert_stmt = "\n".join([insert_data, joined_values])
-        print("=" * 100)
         insert_stmt = insert_stmt[:-1] + ";"
         full_table_stmt = create_table_sql + "\n" + insert_stmt
         self.sql_script_list.append(full_table_stmt)
-        logger.info("\n\n".join(self.sql_script_list))
 
     def generate_all_type_table_script(self):
         all_type_tables = self.type_table_list.copy()
@@ -467,6 +482,7 @@ class RelationalDBScriptGenerator:
             if table == "tree_species":
                 fk = True
             self.generate_type_table_script(table, df, has_fk=fk)
+        logger.info("\n\n".join(self.sql_script_list))
 
     @staticmethod
     def chunks(lst, n):
@@ -476,19 +492,27 @@ class RelationalDBScriptGenerator:
 
     def write_main_tree_table_script(self):
         main_table_sql_list = []
-        table_name = "tree"
+        table_name = "tree_history"
         df = self.tables_dict[table_name]
 
         # Get columns and datatypes
         main_table_df = df.select(["diameter_cm", "spread_radius_m", "tree_height_m", "location_x",
-                                   "location_y", "longitude", "latitude", "tree_tag"])
-        cols_list = ["tree_id"]
+                                   "location_y", "longitude", "latitude", "tree_tag", "tree_change_datetime",
+                                   "is_live_change_ind"])
+        main_table_df.glimpse()
+
+        cols_list = ["tree_history_id"]
         cols_list.extend(main_table_df.columns)
         cols_list.extend([i + "_id" for i in self.type_table_list])
         cols_list = [(i, "int(11)") for i in cols_list]
         cols_list = [(i[0], "float(8, 6)") if i[0] == "latitude" else i for i in cols_list]
         cols_list = [(i[0], "float(9, 6)") if i[0] == "longitude" else i for i in cols_list]
         cols_list = [(i[0], "float(9, 2)") if "location" in i[0] else i for i in cols_list]
+        cols_list = [(i[0], "tinyint(1)") if i[0] == "is_live_change_ind" else i for i in cols_list]
+        cols_list = [(i[0], "timestamp NOT NULL DEFAULT current_timestamp()")
+                     if i[0] == "tree_change_datetime"
+                     else i
+                     for i in cols_list]
 
         # Create table statement
         create_table_list = [f"CREATE TABLE `{table_name}` ("]
@@ -497,7 +521,7 @@ class RelationalDBScriptGenerator:
             col_name, type = col
             sql_col_name_list.append(col_name)
             insert_stmt = f"`{col_name}` {type}"
-            if col_name == "tree_id":
+            if col_name == "tree_history_id":
                 insert_stmt += " NOT NULL"
             insert_stmt += ","
             create_table_list.append(insert_stmt)
@@ -515,14 +539,42 @@ class RelationalDBScriptGenerator:
             insert_vals_list[-1] = insert_vals_list[-1].replace(",", "")
             insert_vals_list.append(") VALUES")
             for row in chunked_rows:
-                row_str = (str(row) + ",").replace(", None", ", NULL")
+                row_str = (str(row) + ",").replace(", None", ", NULL").replace("'DEFAULT'", "DEFAULT")
                 insert_vals_list.append(row_str)
             insert_sql = "\n".join(insert_vals_list)[:-1] + ";"
             main_table_sql_list.append(insert_sql)
 
         # Joining query
         main_sql_str = "\n\n".join(main_table_sql_list)
+        logger.info(main_sql_str)
         self.sql_script_list.append(main_sql_str)
+
+    def write_tree_table(self):
+        table_name = "tree"
+        df = self.tables_dict["tree"]
+        data_list = df.rows()
+        cols_list = ["tree_id", "inactive_datetime", "tree_history_id"]
+
+        create_table_sql = f"""
+        CREATE TABLE `{table_name}` (
+        `{cols_list[0]}` int(11) NOT NULL,
+        `{cols_list[1]}` timestamp NULL DEFAULT NULL,
+        `{cols_list[2]}` int(11)
+        );
+        """
+
+        insert_data = f"""
+        INSERT INTO `{table_name}` (`{cols_list[0]}`, `{cols_list[1]}`, `{cols_list[2]}`) VALUES
+        """
+        values_sql = [f"({i[0]}, {i[1]}, {i[2]})," for i in data_list]
+
+        joined_values = "\n".join(values_sql)
+
+        insert_stmt = "\n".join([insert_data, joined_values])
+        insert_stmt = insert_stmt[:-1] + ";"
+        full_table_stmt = create_table_sql + "\n" + insert_stmt
+        logger.info(full_table_stmt)
+        self.sql_script_list.append(full_table_stmt)
 
     def test_type_table(self, orig_val_col, type_val_col, link_table_df, type_table_df, *test_values):
         for orig_val in test_values:
@@ -558,7 +610,7 @@ class RelationalDBScriptGenerator:
         self.sql_script_list.append("COMMIT;")
 
     def combine_and_log_final_sql(self):
-        DataInspector.create_data_quality_log(log_dir="sql_output", prefix="sql")
+        DataInspector.create_data_quality_log(log_dir="data_exploration/sql_output", prefix="sql")
         sep = "-- " + "-" * 100
         sql_output = f"\n\n{sep}\n\n".join(self.sql_script_list)
         logger.info(sql_output)
@@ -566,6 +618,7 @@ class RelationalDBScriptGenerator:
     def generate_full_sql_script_for_import(self):
         self.generate_all_type_table_script()
         self.write_main_tree_table_script()
+        self.write_tree_table()
         self.commit_transaction()
         self.combine_and_log_final_sql()
 
@@ -576,7 +629,7 @@ def explore_data(df=None):
     :return:
     """
     # Set up
-    data_explore = DataInspector("odTrees.csv")
+    data_explore = DataInspector("data_exploration/odTrees.csv")
     if df is not None:
         data_explore.df = df
     else:
@@ -598,14 +651,14 @@ def explore_data(df=None):
     data_explore.check_for_negative_values_int_cols()
 
 
-def modify_data(df=None):
+def cleanse_data(df=None):
     """
     Making changes to the dataset that make the data clearer and removes errors.
     :return:
     """
     # Set up
     if df is None:
-        data_inspector = DataInspector("odTrees.csv")
+        data_inspector = DataInspector("data_exploration/odTrees.csv")
         data_inspector.load_data()
         data_inspector.create_data_quality_log()
         df = data_inspector.df
@@ -633,10 +686,6 @@ def modify_data(df=None):
     data_cleanser.title_case_string_cols()
     data_cleanser.trim_whitespace_all_string_cols()
 
-    # Changing negatives to positives - consider why and what?
-    data_cleanser.reverse_negative_to_positive("spreadradiusinmetres")
-    data_cleanser.reverse_negative_to_positive("diameterincentimetres")
-
     # Remove description column
     data_cleanser.drop_column("description")
 
@@ -647,7 +696,14 @@ def modify_data(df=None):
     return data_cleanser.df
 
 
-def test_data(df):
+def automated_changes(df):
+    # Changing negatives to positives
+    data_cleanser = DataCleanser(df)
+    data_cleanser.reverse_negative_to_positive("spread_radius_m")
+    data_cleanser.reverse_negative_to_positive("diameter_cm")
+
+
+def run_data_checks(df):
     data_test = DataTest(df)
 
     # Throws error if numeric string is found
@@ -657,30 +713,9 @@ def test_data(df):
     data_test.valid_lat_and_long()
 
 
-explore_data()
-quit()
-trees_df = modify_data()
-# db_gen = RelationalDBScriptGenerator(trees_df)
-# db_gen.generate_full_sql_script_for_import()
-df_build = RelationalDataFrameBuilder(trees_df)
-df_dict = df_build.create_all_tables()
-tree_df = df_dict["tree"]
-logger.info(tree_df.select(pl.max("tree_height_m")))
-quit()
-table_list = sorted([k for k in df_dict.keys()])
-logger.info(table_list)
-logger.info(len(table_list))
-df_gen = RelationalDBScriptGenerator(df_dict)
-df_gen.generate_full_sql_script_for_import()
-quit()
-# test_data(trees_df)
+trees_df = cleanse_data()
 
-# Options for dealing with data issues
-# 1) List of questions about what people want out from the data
-# 2) Entity relationship diagram
-# 3) Project plan
-
-# Next steps:
-# 2) Create GH project
-# 3) Write project plan
-# 4) Begin notes on data decisions taken so far
+relational_df_builder = RelationalDataFrameBuilder(trees_df)
+db_gen_dict = relational_df_builder.create_all_tables()
+db_gen = RelationalDBScriptGenerator(db_gen_dict)
+db_gen.generate_full_sql_script_for_import()

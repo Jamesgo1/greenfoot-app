@@ -1,12 +1,11 @@
 from fastapi import FastAPI, HTTPException, Depends, status
-from fastapi.middleware.cors  import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 from typing import Annotated
 import models as m
 import schemas
 from database import engine, SessionLocal
 from sqlalchemy.orm import Session
-import get_funcs as get
-
+import crud_queries as crud
 
 app = FastAPI()
 m.Base.metadata.create_all(bind=engine)
@@ -24,6 +23,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 def get_db():
     db = SessionLocal()
     try:
@@ -31,36 +31,6 @@ def get_db():
     finally:
         db.close()
 
-# cols_to_return = [m.Tree.tree_id,
-#                   m.Tree.diameter_cm,
-#                   m.Tree.spread_radius_m,
-#                   m.Tree.tree_height_m,
-#                   m.Tree.longitude,
-#                   m.Tree.latitude,
-#                   m.TreeSpecies.tree_species_desc,
-#                   m.TreeSpeciesType.tree_species_type_desc,
-#                   m.TreeAgeGroup.tree_age_group_desc,
-#                   m.TreeSurround.tree_surround_desc,
-#                   m.TreeVigour.tree_vigour_desc,
-#                   m.TreeCondition.tree_condition_desc, ]
-#
-# db = SessionLocal()
-# db.query(*cols_to_return)
-# tree_data = db.query(
-# *cols_to_return
-# ).join(
-#     m.TreeSpecies, m.Tree.tree_species_id == m.TreeSpecies.tree_species_id).join(
-#     m.TreeSpeciesType, m.TreeSpecies.tree_species_type_id == m.TreeSpeciesType.tree_species_type_id).join(
-#     m.TreeAgeGroup).join(
-#     m.TreeCondition).join(
-#     m.TreeDataQuality).join(
-#     m.TreeSurround).join(
-#     m.TreeVigour).filter(m.Tree.tree_id < 100).order_by(m.Tree.tree_id).limit(50).all()
-# print(tree_data)
-# quit()
-# for row in q1:
-#     print(row.__dict__)
-# quit()
 
 db_dependency = Annotated[Session, Depends(get_db)]
 
@@ -73,34 +43,25 @@ async def read_species_type(species_id: int, db: db_dependency):
     return species
 
 
-@app.get("/all-tree-details/{tree_id}", response_model=list[schemas.AllTreeDetailsBase], status_code=status.HTTP_200_OK)
-async def get_all_tree_details(tree_id: int, db: db_dependency):
-    return db.query(
-        m.Tree.tree_id,
-        m.Tree.diameter_cm,
-        m.Tree.spread_radius_m,
-        m.Tree.tree_height_m,
-        m.Tree.longitude,
-        m.Tree.latitude,
-        m.TreeSpecies.tree_species_desc,
-        m.TreeSpeciesType.tree_species_type_desc,
-        m.TreeAgeGroup.tree_age_group_desc,
-        m.TreeSurround.tree_surround_desc,
-        m.TreeVigour.tree_vigour_desc,
-        m.TreeCondition.tree_condition_desc,
-    ).join(
-        m.TreeSpecies, m.Tree.tree_species_id == m.TreeSpecies.tree_species_id).join(
-        m.TreeSpeciesType, m.TreeSpecies.tree_species_type_id == m.TreeSpeciesType.tree_species_type_id).join(
-        m.TreeAgeGroup).join(
-        m.TreeCondition).join(
-        m.TreeDataQuality).join(
-        m.TreeSurround).join(
-        m.TreeVigour).filter(m.Tree.tree_id == tree_id).all()
-
-
 @app.get("/all-tree-info/", response_model=list[schemas.AllTreeDetailsBase], status_code=status.HTTP_200_OK)
-async def get_tree_details_alt(db: db_dependency, limit:int = 50, tree_id: int | None = None):
+async def get_tree_details_alt(db: db_dependency, limit: int = 50, tree_id: int | None = None):
     if not tree_id:
-        return get.get_all_tree_details_all(db=db, limit=limit)
+        return crud.get_all_tree_details_full_history(db=db, limit=limit)
     else:
-        return get.get_all_tree_details_by_id(db=db, tree_id=tree_id, limit=limit)
+        return crud.get_all_tree_details_by_id(db=db, tree_id=tree_id, limit=limit)
+
+@app.get("/username-exists/", response_model=schemas.UserExists, status_code=status.HTTP_200_OK)
+async def check_nickname_exists(db: db_dependency, nickname: str):
+    return crud.check_nickname_exists(db=db, nickname=nickname)
+
+@app.post("/user-details/", response_model=list[schemas.UserBase], status_code=status.HTTP_200_OK)
+async def get_user_details(db: db_dependency, id_details: schemas.UserAuth):
+    return crud.get_user_by_sub(db=db, sub=id_details)
+
+
+@app.post("/add-user/", response_model=schemas.UserBase, status_code=status.HTTP_201_CREATED)
+async def create_user(db: db_dependency, user_details: schemas.UserBase):
+    current_user = crud.get_user_by_sub(db=db, sub=user_details.user_auth0_sub)
+    if current_user:
+        raise HTTPException(status_code=400, detail="User already registered")
+    return crud.create_user(db=db, user=user_details)

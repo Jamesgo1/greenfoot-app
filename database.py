@@ -3,7 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 
-URL_DATABASE = "mysql+pymysql://root:@localhost:3306/greenfoot"
+URL_DATABASE = "mysql+pymysql://root:@localhost:3306/greenfootv2"
 engine = create_engine(URL_DATABASE)
 
 
