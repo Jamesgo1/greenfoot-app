@@ -109,7 +109,8 @@ def get_all_tree_details_full_history(db: Session, limit: int):
 
 
 def get_user_by_sub(db: Session, sub: s.UserAuth):
-    return db.query(m.User.nickname,
+    return db.query(m.User.user_id,
+                    m.User.nickname,
                     m.User.given_name,
                     m.User.family_name,
                     m.User.email_verified,
@@ -118,13 +119,28 @@ def get_user_by_sub(db: Session, sub: s.UserAuth):
         m.User.user_auth0_sub == sub.user_auth0_sub, m.User.is_active == 1).all()
 
 
-def create_user(db: Session, user: s.UserBase):
+"""
+    nickname: str
+    given_name: Optional[str]
+    family_name: Optional[str]
+    email_verified: Optional[int]
+        user_auth0_sub: str
+    email: str
+    is_active: Optional[int]
+    user_type_id: Optional[int]
+"""
+
+
+def create_user(db: Session, user: s.UserAdd):
     new_user = m.User(
-        user_auth0_sub=user.user_auth0_sub,
         nickname=user.nickname,
         given_name=user.given_name,
         family_name=user.family_name,
-        email_verified=user.email_verified
+        email_verified=user.email_verified,
+        user_auth0_sub=user.user_auth0_sub,
+        email=user.email,
+        is_active=user.is_active,
+        user_type_id=user.user_type_id
     )
     db.add(new_user)
     db.commit()
@@ -132,12 +148,18 @@ def create_user(db: Session, user: s.UserBase):
     return new_user
 
 
-def check_nickname_exists(db: Session, nickname: str):
+def update_user_details(db: Session, user_auth0_sub: str, update_vals: dict):
+    db.query(m.User).filter(m.User.user_auth0_sub == user_auth0_sub).update(update_vals)
+    db.commit()
+    return db.query(m.User).filter(m.User.user_auth0_sub == user_auth0_sub).first()
+
+
+def check_nickname_available(db: Session, nickname: str):
     users_found = db.query(m.User).filter(m.User.nickname == nickname).all()
-    nickname_exists = False
+    nickname_available = False
     if len(users_found) == 0:
-        nickname_exists = True
-    return {"user_exists": nickname_exists}
+        nickname_available = True
+    return {"user_available": nickname_available}
 
 
 def put_add_new_tree_history(db: Session, tree_id: int):

@@ -46,20 +46,29 @@ class AllTreeDetailsBase(BaseModel):
 
 
 class UserBase(BaseModel):
-    nickname: str
-    given_name: Optional[str]
-    family_name: Optional[str]
-    email_verified: Optional[int]
+    nickname: str = "default"
+    given_name: Optional[str] = None
+    family_name: Optional[str] = None
+    email_verified: Optional[int] = None
+
+
+class UserDetails(UserBase):
     user_type_desc: str
+    user_id: int
 
 
-class AddUser(UserBase):
-    user_auth0_sub: str
-    email: str
+class UserAdd(UserBase):
+    user_auth0_sub: str = "default"
+    email: str = None
+    is_active: Optional[int] = 1
+    user_type_id: Optional[int] = 1
 
 
 class UserAuth(BaseModel):
     user_auth0_sub: str
 
-class UserExists(BaseModel):
-    user_exists: bool
+
+class UserAvailable(BaseModel):
+    user_available: bool
+
+

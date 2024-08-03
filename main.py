@@ -50,18 +50,20 @@ async def get_tree_details_alt(db: db_dependency, limit: int = 50, tree_id: int 
     else:
         return crud.get_all_tree_details_by_id(db=db, tree_id=tree_id, limit=limit)
 
-@app.get("/username-exists/", response_model=schemas.UserExists, status_code=status.HTTP_200_OK)
-async def check_nickname_exists(db: db_dependency, nickname: str):
-    return crud.check_nickname_exists(db=db, nickname=nickname)
+@app.get("/username-available/", response_model=schemas.UserAvailable, status_code=status.HTTP_200_OK)
+async def check_nickname_available(db: db_dependency, nickname: str):
+    return crud.check_nickname_available(db=db, nickname=nickname)
 
-@app.post("/user-details/", response_model=list[schemas.UserBase], status_code=status.HTTP_200_OK)
+@app.post("/user-details/", response_model=list[schemas.UserDetails], status_code=status.HTTP_200_OK)
 async def get_user_details(db: db_dependency, id_details: schemas.UserAuth):
     return crud.get_user_by_sub(db=db, sub=id_details)
 
+@app.patch("/change-user-details/{auth0_sub}", response_model=schemas.UserAdd, status_code=status.HTTP_200_OK)
+async def update_user_details(db: db_dependency, auth0_sub: str, user_details: schemas.UserAdd):
+    user_details_to_update = user_details.dict(exclude_unset=True)
+    return crud.update_user_details(db=db, user_auth0_sub=auth0_sub, update_vals=user_details_to_update)
 
-@app.post("/add-user/", response_model=schemas.UserBase, status_code=status.HTTP_201_CREATED)
-async def create_user(db: db_dependency, user_details: schemas.UserBase):
-    current_user = crud.get_user_by_sub(db=db, sub=user_details.user_auth0_sub)
-    if current_user:
-        raise HTTPException(status_code=400, detail="User already registered")
+
+@app.post("/add-user/", response_model=schemas.UserAdd, status_code=status.HTTP_201_CREATED)
+async def create_user(db: db_dependency, user_details: schemas.UserAdd):
     return crud.create_user(db=db, user=user_details)
