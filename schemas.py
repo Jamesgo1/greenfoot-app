@@ -40,6 +40,8 @@ class AllTreeDetailsBase(BaseModel):
     tree_surround_desc: Optional[str]
     tree_vigour_desc: Optional[str]
     tree_condition_desc: Optional[str]
+    nickname: Optional[str]
+    tree_change_desc: Optional[str]
 
     class Config:
         orm_mode = True
@@ -72,3 +74,6 @@ class UserAvailable(BaseModel):
     user_available: bool
 
 
+class DiscreteTableTypeValues(BaseModel):
+    table_id: int
+    table_desc: str

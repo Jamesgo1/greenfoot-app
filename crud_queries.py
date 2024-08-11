@@ -2,51 +2,89 @@ import models as m
 import schemas as s
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from sqlalchemy import text
+from sqlalchemy.dialects import mysql
+from sqlalchemy import select, column
+import enum_input_options as enum_opt
 
 
-# class TreeDataGetter:
-#     tree_data_rows_select = """
-#     t.tree_id,
-#     th.diameter_cm,
-#     th.spread_radius_m,
-#     th.tree_height_m,
-#     th.longitude,
-#     th.latitude,
-#     ts.tree_species_desc,
-#     tst.tree_species_type_desc,
-#     tag.tree_age_group_desc,
-#     m.TreeSurround.tree_surround_desc,
-#     m.TreeVigour.tree_vigour_desc,
-#     m.TreeCondition.tree_condition_desc
-#     """
-#
-#     def __init__(self, db: Session):
-#         self.db = db
-#
-#     def get_all_trees_full_history_query(self):
-#         return """
-#         SELECT *
-#         FROM tree_history th
-#         INNER JOIN tree_species ts
-#         ON th.tree_species_id = ts.tree_species_id
-#         INNER JOIN tree_species_type tst
-#         ON ts.tree_species_type_id = tst.tree_species_type_id
-#         INNER JOIN tree_age_group tag
-#         ON tsh.tree_age_group_id = tag.tree_age_group_id
-#         INNER JOIN tree_condition tc
-#         ON th.tree_condition_id = tc.tree_condition_id
-#         INNER JOIN tree_data_quality tdq
-#         ON th.tree_data_quality_id = tdq.tree_data_quality_id
-#         INNER JOIN tree_surround ts
-#         ON th.tree_surround_id = ts.tree_surround_id
-#         INNER JOIN tree_vigour tv
-#         ON th.tree_vigour_id = tv.tree_vigour_id
-#         INNER JOIN tree t
-#         ON th.tree_history_id = t.tree_history_id
-#         """
+def get_all_tree_details_full_history_query_by_location(db: Session, lat: str, long: str, limit: int):
+    """
+    Base query returns the query object for all tree details for all their history
+    :param db:
+    :return:
+    """
+    params = {"lat": lat, "long": long, "limit": limit}
+    return db.execute(
+        text(
+            f"""
+SELECT m1.tree_id, 
+m1.tree_change_datetime, 
+m1.diameter_cm, 
+m1.spread_radius_m, 
+m1.tree_height_m, 
+m1.longitude, 
+m1.latitude, 
+m1.tree_species_desc, 
+m1.tree_species_type_desc, 
+m1.tree_age_group_desc, 
+m1.tree_surround_desc, 
+m1.tree_vigour_desc, 
+m1.tree_condition_desc, 
+m1.nickname, 
+m1.tree_change_desc 
+FROM (
+            SELECT tree.tree_id AS tree_id, 
+            tree_history.tree_change_datetime AS tree_change_datetime, 
+            tree_history.diameter_cm AS diameter_cm, 
+            tree_history.spread_radius_m AS spread_radius_m, 
+            tree_history.tree_height_m AS tree_height_m, 
+            tree_history.longitude AS longitude, 
+            tree_history.latitude AS latitude, 
+            tree_species.tree_species_desc AS tree_species_desc, 
+            tree_species_type.tree_species_type_desc AS tree_species_type_desc, 
+            tree_age_group.tree_age_group_desc AS tree_age_group_desc, 
+            tree_surround.tree_surround_desc AS tree_surround_desc, 
+            tree_vigour.tree_vigour_desc AS tree_vigour_desc, 
+            tree_condition.tree_condition_desc AS tree_condition_desc, 
+            user.nickname AS nickname, 
+            tree_change.tree_change_desc AS tree_change_desc 
+            FROM tree_history 
+            LEFT OUTER JOIN tree_species ON tree_history.tree_species_id = tree_species.tree_species_id 
+            LEFT OUTER JOIN tree_species_type ON tree_species.tree_species_type_id = tree_species_type.tree_species_type_id 
+            LEFT OUTER JOIN tree_age_group ON tree_age_group.tree_age_group_id = tree_history.tree_age_group_id 
+            LEFT OUTER JOIN tree_condition ON tree_condition.tree_condition_id = tree_history.tree_condition_id 
+            LEFT OUTER JOIN tree_data_quality ON tree_data_quality.tree_data_quality_id = tree_history.tree_data_quality_id 
+            LEFT OUTER JOIN tree_surround ON tree_surround.tree_surround_id = tree_history.tree_surround_id 
+            LEFT OUTER JOIN tree_vigour ON tree_vigour.tree_vigour_id = tree_history.tree_vigour_id 
+            INNER JOIN tree ON tree.tree_id = tree_history.tree_id 
+            LEFT OUTER JOIN user ON user.user_id = tree_history.user_id 
+            LEFT OUTER JOIN tree_change ON tree_change.tree_change_id = tree_history.tree_change_id
+            ) AS m1 
+JOIN (SELECT tree_history.tree_id AS tree_id, max(tree_history.tree_change_datetime) AS maxdate 
+FROM tree_history 
+WHERE tree_history.is_live_change_ind = 1 
+AND tree_history.latitude IS NOT NULL
+GROUP BY tree_history.tree_id) AS t1 
+ON m1.tree_id = t1.tree_id 
+WHERE m1.tree_change_datetime = t1.maxdate 
+    AND m1.tree_id = t1.tree_id 
+ORDER BY ST_DISTANCE(
+        POINT(m1.latitude, m1.longitude), 
+        POINT(:lat, :long)
+        )
+        LIMIT :limit
+        """
+        ), params
+    ).all()
 
 
 def get_all_tree_details_full_history_query(db: Session):
+    """
+    Base query returns the query object for all tree details for all their history
+    :param db:
+    :return:
+    """
     return db.query(
         m.Tree.tree_id,
         m.TreeHistory.tree_change_datetime,
@@ -61,6 +99,8 @@ def get_all_tree_details_full_history_query(db: Session):
         m.TreeSurround.tree_surround_desc,
         m.TreeVigour.tree_vigour_desc,
         m.TreeCondition.tree_condition_desc,
+        m.User.nickname,
+        m.TreeChange.tree_change_desc
 
     ).join(
         m.TreeSpecies, m.TreeHistory.tree_species_id == m.TreeSpecies.tree_species_id, isouter=True).join(
@@ -71,10 +111,17 @@ def get_all_tree_details_full_history_query(db: Session):
         m.TreeDataQuality, isouter=True).join(
         m.TreeSurround, isouter=True).join(
         m.TreeVigour, isouter=True).join(
-        m.Tree)
+        m.Tree).join(
+        m.User, isouter=True).join(
+        m.TreeChange, isouter=True)
 
 
-def get_all_tree_details_full_history_queryv2(db: Session):
+def get_latest_live_tree_details_query(db: Session):
+    """
+    Returns the query for the latest live version of every tree.
+    :param db:
+    :return:
+    """
     subq = db.query(
         m.TreeHistory.tree_id,
         func.max(m.TreeHistory.tree_change_datetime).label("maxdate")
@@ -89,23 +136,25 @@ def get_all_tree_details_full_history_queryv2(db: Session):
     return query
 
 
-def get_all_tree_details_by_id(db: Session, tree_id: int, limit: int):
-    query = get_all_tree_details_full_history_query(db)
-    return query.filter(m.Tree.tree_id == tree_id).order_by(m.Tree.tree_id).limit(limit).all()
-
-
-def get_all_tree_details_full_history(db: Session, limit: int):
-    query = get_all_tree_details_full_history_queryv2(db)
+def get_latest_tree_details_all(db: Session, limit: int):
+    query = get_latest_live_tree_details_query(db)
     return query.limit(limit).all()
 
 
-"""
-    nickname: str
-    given_name: Optional[str]
-    family_name: Optional[str]
-    email_verified: Optional[int]
-    user_type_desc: str
-"""
+def get_latest_tree_details_by_id(db: Session, tree_id: int, limit: int):
+    query = get_latest_live_tree_details_query(db)
+    return query.filter(m.Tree.tree_id == tree_id).order_by(m.Tree.tree_id).limit(limit).all()
+
+
+def get_all_tree_details_by_id(db: Session, tree_id: int, limit: int):
+    query = get_all_tree_details_full_history_query(db)
+    return query.filter(m.Tree.tree_id == tree_id).order_by(m.TreeHistory.tree_change_datetime.desc()).limit(
+        limit).all()
+
+
+def get_all_tree_details_all(db: Session, limit: int):
+    query = get_all_tree_details_full_history_query(db)
+    return query.order_by(m.Tree.tree_id, m.TreeHistory.tree_change_datetime.desc()).limit(limit).all()
 
 
 def get_user_by_sub(db: Session, sub: s.UserAuth):
@@ -117,18 +166,6 @@ def get_user_by_sub(db: Session, sub: s.UserAuth):
                     m.UserType.user_type_desc).join(
         m.UserType).filter(
         m.User.user_auth0_sub == sub.user_auth0_sub, m.User.is_active == 1).all()
-
-
-"""
-    nickname: str
-    given_name: Optional[str]
-    family_name: Optional[str]
-    email_verified: Optional[int]
-        user_auth0_sub: str
-    email: str
-    is_active: Optional[int]
-    user_type_id: Optional[int]
-"""
 
 
 def create_user(db: Session, user: s.UserAdd):
@@ -164,3 +201,35 @@ def check_nickname_available(db: Session, nickname: str):
 
 def put_add_new_tree_history(db: Session, tree_id: int):
     get_all_tree_details_by_id(db, tree_id)
+
+
+def get_discrete_tree_desc_options(db: Session, table_name: enum_opt):
+    table_to_table_obj_dict = {
+        'tree_species': m.TreeSpecies,
+        'tree_vigour': m.TreeVigour,
+        'tree_surround': m.TreeSurround,
+        'tree_data_quality': m.TreeDataQuality,
+        'tree_condition': m.TreeCondition,
+        'tree_age_group': m.TreeAgeGroup,
+    }
+    table_name_str = table_name.value
+    table_model = table_to_table_obj_dict[table_name_str]
+    q_output = db.query(table_model).all()
+    values_list = []
+    for obj in q_output:
+        output_dict = {}
+        for k, v in obj.__dict__.items():
+            if k == f"{table_name_str}_id":
+                output_dict["table_id"] = v
+            elif k == f"{table_name_str}_desc":
+                output_dict["table_desc"] = v
+        values_list.append(output_dict)
+
+    return values_list
+
+
+def get_discrete_tree_species_options(db: Session):
+    output_list = db.query(m.TreeSpeciesType.tree_species_type_id, m.TreeSpeciesType.tree_species_type_desc).join(
+        m.TreeSpecies).distinct().all()
+    output_dict = [{"table_id": i[0], "table_desc": i[1]} for i in output_list]
+    return output_dict
