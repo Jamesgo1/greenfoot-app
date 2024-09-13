@@ -1,8 +1,9 @@
 # coding: utf-8
 from sqlalchemy import Column, DateTime, Float, ForeignKey, String, TIMESTAMP, Text, text
-from sqlalchemy.dialects.mysql import INTEGER, TINYINT
+from sqlalchemy.dialects.mysql import INTEGER, TINYINT, LONGTEXT
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.schema import FetchedValue
 
 Base = declarative_base()
 metadata = Base.metadata
@@ -13,6 +14,9 @@ class Image(Base):
 
     image_id = Column(INTEGER(11), primary_key=True)
     image_path = Column(String(255), nullable=False)
+    user_id = Column(ForeignKey('user.user_id'), nullable=True, index=True)
+
+    user = relationship('User')
 
 
 class ImageTag(Base):
@@ -36,13 +40,6 @@ class TreeAgeGroup(Base):
     tree_age_group_desc = Column(String(255), nullable=False)
 
 
-class TreeChange(Base):
-    __tablename__ = 'tree_change'
-
-    tree_change_id = Column(INTEGER(11), primary_key=True)
-    tree_change_desc = Column(String(255), nullable=False)
-
-
 class TreeCondition(Base):
     __tablename__ = 'tree_condition'
 
@@ -55,6 +52,16 @@ class TreeDataQuality(Base):
 
     tree_data_quality_id = Column(INTEGER(11), primary_key=True)
     tree_data_quality_desc = Column(String(255), nullable=False)
+
+
+class TreeDailyImage(Base):
+    __tablename__ = "tree_daily_image"
+
+    tree_daily_image_id = Column(INTEGER(11), primary_key=True)
+    daily_image_date = Column(DateTime, nullable=False, server_default=text("current_timestamp()"))
+    tree_image_id = Column(ForeignKey('tree_image.tree_image_id'), nullable=False, index=True)
+
+    tree_image = relationship('TreeImage')
 
 
 class TreeSpeciesType(Base):
@@ -121,6 +128,9 @@ class TreeImage(Base):
     tree_image_id = Column(INTEGER(11), primary_key=True)
     image_add_datetime = Column(DateTime, nullable=False, server_default=text("current_timestamp()"))
     image_end_datetime = Column(DateTime)
+    image_approved_ind = Column(TINYINT)
+    last_ai_analysis = Column(DateTime, nullable=True)
+    latest_labels = Column(LONGTEXT, nullable=True)
     tree_id = Column(ForeignKey('tree.tree_id'), nullable=False, index=True)
     image_id = Column(ForeignKey('image.image_id'), nullable=False, index=True)
 
@@ -150,8 +160,9 @@ class TreeHistory(Base):
     longitude = Column(Float(9))
     latitude = Column(Float(8))
     tree_tag = Column(INTEGER(11))
+    tree_change_desc = Column(String(255), nullable=True)
     tree_change_datetime = Column(TIMESTAMP, nullable=False, server_default=text("current_timestamp()"))
-    is_live_change_ind = Column(TINYINT(1))
+    is_live_change_ind = Column(TINYINT(1), nullable=False, server_default=FetchedValue())
     tree_type_id = Column(ForeignKey('tree_type.tree_type_id'), index=True)
     tree_species_id = Column(ForeignKey('tree_species.tree_species_id'), index=True)
     tree_age_group_id = Column(ForeignKey('tree_age_group.tree_age_group_id'), index=True)
@@ -159,12 +170,10 @@ class TreeHistory(Base):
     tree_vigour_id = Column(ForeignKey('tree_vigour.tree_vigour_id'), index=True)
     tree_condition_id = Column(ForeignKey('tree_condition.tree_condition_id'), index=True)
     tree_data_quality_id = Column(ForeignKey('tree_data_quality.tree_data_quality_id'), index=True)
-    tree_change_id = Column(ForeignKey('tree_change.tree_change_id'), index=True)
     tree_id = Column(ForeignKey('tree.tree_id'), nullable=False, index=True)
     user_id = Column(ForeignKey('user.user_id'), nullable=False, index=True)
 
     tree_age_group = relationship('TreeAgeGroup')
-    tree_change = relationship('TreeChange')
     tree_condition = relationship('TreeCondition')
     tree_data_quality = relationship('TreeDataQuality')
     tree = relationship('Tree')
@@ -186,6 +195,7 @@ class User(Base):
     family_name = Column(String(255), nullable=True)
     email_verified = Column(TINYINT(1), nullable=True)
     is_active = Column(TINYINT(1), nullable=False)
+    noti_last_clicked = Column(TIMESTAMP, nullable=False, server_default=text("current_timestamp()"))
     user_type_id = Column(ForeignKey('user_type.user_type_id'), nullable=False, index=True)
 
     user_type = relationship('UserType')
